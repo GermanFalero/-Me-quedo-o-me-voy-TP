@@ -199,21 +199,35 @@ public class PlayerController : MonoBehaviour
 
         // ----- Aplicar movimiento -----
         Vector3 motion = horizontalVelocity * Time.deltaTime + Vector3.up * verticalVelocity * Time.deltaTime;
-        cc.Move(motion);
+
+        int steps = 4; // Número de sub-pasos
+        for (int i = 0; i < steps; i++)
+        {
+        cc.Move(motion / steps);
+    }
     }
 
     // ----- Colisiones con objetos físicos -----
-    void OnControllerColliderHit(ControllerColliderHit hit)
+    void OnControllerColliderHit(ControllerColliderHit hit){
+    // --- Cancelar salto al golpear un techo ---
+    // Si la normal del impacto apunta hacia abajo, significa que chocamos contra algo arriba.
+    if (hit.normal.y < -0.7f)
     {
-        Rigidbody rb = hit.collider.attachedRigidbody;
-        if (rb != null && !rb.isKinematic)
-        {
-            Vector3 pushDirection = hit.moveDirection;
-            pushDirection.y = 0;
-            float pushPower = 10f;
-            rb.AddForceAtPosition(pushDirection * pushPower, hit.point, ForceMode.Force);
-        }
+        isJumping = false;          // Termina el estado de salto
+        verticalVelocity = -2f;     // Pequeño impulso hacia abajo para despegarse del techo
     }
+
+    // --- Empujar objetos con Rigidbody ---
+    Rigidbody rb = hit.collider.attachedRigidbody;
+
+    if (rb != null && !rb.isKinematic)
+    {
+        Vector3 pushDirection = hit.moveDirection;
+        pushDirection.y = 0;        // No empujar hacia arriba/abajo
+
+        float pushPower = 10f;      // Ajustá este valor según la masa de los objetos
+        rb.AddForceAtPosition(pushDirection * pushPower, hit.point, ForceMode.Force);
+    }}
 
     // ----- Métodos para checkpoints y respawn -----
     public void SetCheckpoint(Vector3 newPosition)
