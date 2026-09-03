@@ -4,9 +4,9 @@ using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using System.Collections;
 
-public class GameManager : MonoBehaviour
+public class GameManager : NetworkBehaviour
 {
-    public static GameManager instance;
+    public static GameManager Instance;
 
     [Header("Configuración de escenas")]
     public string escenaOffline = "Nivel1_Neon";
@@ -20,11 +20,14 @@ public class GameManager : MonoBehaviour
     public string ipPorDefecto = "127.0.0.1";
     public ushort puerto = 7777;
 
+    public NetworkVariable<int> estadoCarrera = new NetworkVariable<int>(0);
+    public NetworkVariable<ulong> ganadorId = new NetworkVariable<ulong>(999);
+
     void Awake()
     {
-        if (instance == null)
+        if (Instance == null)
         {
-            instance = this;
+            Instance = this;
             DontDestroyOnLoad(gameObject);
         }
         else
@@ -35,7 +38,6 @@ public class GameManager : MonoBehaviour
 
     public void JugarOffline()
     {
-        Debug.Log("Cargando modo offline...");
         SceneManager.LoadScene(escenaOffline);
         StartCoroutine(InstanciarJugadorOffline());
     }
@@ -66,19 +68,8 @@ public class GameManager : MonoBehaviour
 
     public void CrearSala()
     {
-        Debug.Log("Iniciando host...");
-
-        if (NetworkManager.Singleton == null)
-        {
-            Debug.LogError("NetworkManager.Singleton es null.");
-            return;
-        }
-
-        if (NetworkManager.Singleton.IsListening)
-        {
-            Debug.LogWarning("Ya hay una sesión activa. Ignorando CrearSala.");
-            return;
-        }
+        if (NetworkManager.Singleton == null) return;
+        if (NetworkManager.Singleton.IsListening) return;
 
         var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
         if (transport != null)
@@ -86,47 +77,47 @@ public class GameManager : MonoBehaviour
 
         if (NetworkManager.Singleton.StartHost())
         {
-            Debug.Log("Host iniciado correctamente.");
             NetworkManager.Singleton.SceneManager.LoadScene(escenaOnline, LoadSceneMode.Single);
-        }
-        else
-        {
-            Debug.LogError("No se pudo iniciar el host.");
         }
     }
 
     public void UnirseASala(string ip)
     {
-        if (string.IsNullOrEmpty(ip))
-        {
-            ip = ipPorDefecto;
-            Debug.LogWarning($"IP vacía, usando {ip}");
-        }
-
-        Debug.Log($"Intentando unirse a {ip}:{puerto}...");
-
-        if (NetworkManager.Singleton == null)
-        {
-            Debug.LogError("NetworkManager.Singleton es null.");
-            return;
-        }
+        if (string.IsNullOrEmpty(ip)) ip = ipPorDefecto;
 
         var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
         if (transport != null)
             transport.SetConnectionData(ip, puerto);
-        else
-        {
-            Debug.LogError("UnityTransport no encontrado.");
-            return;
-        }
 
-        if (NetworkManager.Singleton.StartClient())
+        NetworkManager.Singleton.StartClient();
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    public void PlayerFinishedServerRpc(ulong clientId)
+    {
+        if (estadoCarrera.Value != 0) return;
+
+        estadoCarrera.Value = 1;
+        ganadorId.Value = clientId;
+        MostrarResultadoClientRpc(clientId);
+    }
+
+    [Rpc(SendTo.ClientsAndHost)]
+    void MostrarResultadoClientRpc(ulong ganador)
+    {
+        UIManager.Instance?.MostrarVictoria(ganador);
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    public void PlayerEliminatedServerRpc(ulong clientId)
+    {
+        foreach (var jugador in PlayerController.Jugadores)
         {
-            Debug.Log("Cliente iniciado correctamente.");
-        }
-        else
-        {
-            Debug.LogError("No se pudo iniciar el cliente. Verificá IP, puerto y host activo.");
+            if (jugador.OwnerClientId == clientId)
+            {
+                jugador.DesactivarJugadorClientRpc();
+                break;
+            }
         }
     }
 

@@ -1,2 +1,17 @@
 fileFormatVersion: 2
 guid: 801c1101ac6565e4386c914b167280d4
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - panelMenu: {instanceID: 0}
+  - panelHUD: {instanceID: 0}
+  - panelVictoria: {instanceID: 0}
+  - panelDerrota: {instanceID: 0}
+  - panelPausa: {fileID: 3083373055416132995, guid: 9491b265b7f574745a1fbb39f1417745, type: 3}
+  - textoVictoria: {instanceID: 0}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

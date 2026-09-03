@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using Unity.Netcode;
@@ -5,6 +6,9 @@ using Unity.Netcode;
 [RequireComponent(typeof(CharacterController))]
 public class PlayerController : NetworkBehaviour
 {
+    // Lista estática para que GameManager pueda encontrar a los jugadores
+    public static List<PlayerController> Jugadores = new List<PlayerController>();
+
     [Header("Movimiento")]
     public float walkSpeed = 6f;
     public float runSpeed = 12f;
@@ -26,6 +30,17 @@ public class PlayerController : NetworkBehaviour
     public bool enableLandingBoost = true;
     public float landingBoostMultiplier = 0.8f;
 
+    [Header("Vidas")]
+    public int vidasIniciales = 3;
+    public NetworkVariable<int> vidas = new NetworkVariable<int>(
+        3,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Owner
+    );
+
+    // Variable local para offline
+    private int vidasOffline;
+
     [Header("Referencias")]
     public Transform cameraTransform;
 
@@ -33,10 +48,10 @@ public class PlayerController : NetworkBehaviour
     private Vector3 horizontalVelocity;
     private float verticalVelocity = 0f;
     private float speedMultiplier = 1f;
-    private bool isJumping = false;
     private float coyoteTimer;
     private float jumpBufferTimer;
     private bool wasGrounded = false;
+    private bool invulnerable = false;
 
     private Vector3 checkpointPosition;
 
@@ -44,18 +59,37 @@ public class PlayerController : NetworkBehaviour
     private float currentFrictionMult = 1f;
     private float currentSpeedMult = 1f;
 
+    [Header("Plataformas moviles")]
+    [Tooltip("Distancia del raycast hacia abajo para detectar si hay una plataforma movil debajo.")]
+    public float distanciaDeteccionPlataforma = 0.3f;
+
+    [Tooltip("Layer(s) donde estan las plataformas moviles. Dejalo en Everything si no usas layers separadas.")]
+    public LayerMask capaPlataformas = ~0;
+
+    private MovingPlatform plataformaActual;
+
     public float HorizontalSpeed => horizontalVelocity.magnitude;
     public bool IsGrounded => cc != null && cc.isGrounded;
 
-    // Propiedad que determina si este jugador es el dueño (controla input y cámara)
+    // Propiedad que devuelve las vidas actuales según el modo
+    public int VidasActuales
+    {
+        get
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+                return vidas.Value;
+            else
+                return vidasOffline;
+        }
+    }
+
+    // Determina si este jugador es controlable localmente
     private bool EsDueno
     {
         get
         {
-            // Si no hay NetworkManager o no está escuchando (offline), siempre es dueño
             if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
-                return true;
-            // Si hay red, solo el dueño real
+                return true; // Offline
             return IsOwner;
         }
     }
@@ -63,30 +97,27 @@ public class PlayerController : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         base.OnNetworkSpawn();
+        Jugadores.Add(this);
 
         if (IsOwner)
         {
             enabled = true;
+            vidas.Value = vidasIniciales;
+            vidasOffline = vidasIniciales;
 
-            // Asignar cámara local
             if (Camera.main != null)
             {
                 cameraTransform = Camera.main.transform;
                 Camera.main.GetComponent<CameraController>()?.SetTarget(transform);
             }
-            else
-            {
-                Debug.LogError("No se encontró Camera.main en OnNetworkSpawn.");
-            }
 
-            // Posicionar en spawn
             Transform spawn = SpawnManager.instance?.GetSpawn((int)OwnerClientId);
             if (spawn != null)
                 transform.position = spawn.position;
         }
         else
         {
-            enabled = false; // Los jugadores remotos no procesan input
+            enabled = false;
         }
     }
 
@@ -104,13 +135,16 @@ public class PlayerController : NetworkBehaviour
 
         wasGrounded = cc.isGrounded;
         checkpointPosition = transform.position;
+
+        // Inicializar vidas en offline
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
+            vidasOffline = vidasIniciales;
     }
 
     void Update()
     {
         if (!EsDueno) return;
 
-        // Asegurar que la cámara esté asignada
         if (cameraTransform == null && Camera.main != null)
         {
             cameraTransform = Camera.main.transform;
@@ -119,7 +153,6 @@ public class PlayerController : NetworkBehaviour
 
         HandleMove();
 
-        // Respawn local con tecla R
         if (Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame)
         {
             Respawn();
@@ -128,6 +161,8 @@ public class PlayerController : NetworkBehaviour
 
     void HandleMove()
     {
+        DetectarPlataformaMovil();
+
         if (cc.isGrounded)
             coyoteTimer = coyoteTime;
         else
@@ -138,9 +173,7 @@ public class PlayerController : NetworkBehaviour
         else
             jumpBufferTimer -= Time.deltaTime;
 
-        float moveX = 0f;
-        float moveZ = 0f;
-
+        float moveX = 0f, moveZ = 0f;
         if (Keyboard.current != null)
         {
             if (Keyboard.current.wKey.isPressed || Keyboard.current.upArrowKey.isPressed) moveZ = 1f;
@@ -201,22 +234,18 @@ public class PlayerController : NetworkBehaviour
         if (jumpBufferTimer > 0 && coyoteTimer > 0)
         {
             verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity);
-            isJumping = true;
             jumpBufferTimer = 0;
             coyoteTimer = 0;
         }
 
         if (cc.isGrounded && verticalVelocity < 0)
-        {
             verticalVelocity = -0.1f;
-            isJumping = false;
-        }
 
         if (!cc.isGrounded)
         {
             bool jumpHeld = Keyboard.current != null && Keyboard.current.spaceKey.isPressed;
 
-            if (isJumping && verticalVelocity > 0f)
+            if (verticalVelocity > 0f)
             {
                 float g = jumpHeld ? gravity * lowGravityMultiplier : gravity * highGravityMultiplier;
                 verticalVelocity += g * Time.deltaTime;
@@ -226,26 +255,73 @@ public class PlayerController : NetworkBehaviour
         }
 
         Vector3 motion = horizontalVelocity * Time.deltaTime + Vector3.up * verticalVelocity * Time.deltaTime;
+
+        // Si estamos parados sobre una plataforma movil, sumamos su desplazamiento
+        // para que el jugador se mueva junto con ella (CharacterController no lo hace solo).
+        if (plataformaActual != null)
+            motion += plataformaActual.DeltaMovimiento;
+
         cc.Move(motion);
     }
 
-   void OnControllerColliderHit(ControllerColliderHit hit)
-{
-    Debug.Log("Colisión con: " + hit.collider.name);
-    Rigidbody rb = hit.collider.attachedRigidbody;
-    if (rb != null && !rb.isKinematic)
+    /// <summary>
+    /// Chequea con un raycast hacia abajo si el jugador esta parado sobre una MovingPlatform.
+    /// </summary>
+    void DetectarPlataformaMovil()
     {
-        Debug.Log("Empujando objeto con Rigidbody");
-        Vector3 pushDirection = hit.moveDirection;
-        pushDirection.y = 0;
-        float pushPower = 30f;
-        rb.AddForceAtPosition(pushDirection * pushPower, hit.point, ForceMode.Force);
+        plataformaActual = null;
+
+        if (!cc.isGrounded) return;
+
+        Vector3 origen = transform.position + cc.center + Vector3.up * 0.05f;
+        float distancia = (cc.height / 2f) + distanciaDeteccionPlataforma;
+
+        if (Physics.Raycast(origen, Vector3.down, out RaycastHit hit, distancia, capaPlataformas, QueryTriggerInteraction.Ignore))
+        {
+            plataformaActual = hit.collider.GetComponent<MovingPlatform>();
+        }
     }
-    else
+
+    void OnControllerColliderHit(ControllerColliderHit hit)
     {
-        Debug.Log("El objeto no tiene Rigidbody o es kinematic");
+        if (hit.normal.y < -0.7f)
+            verticalVelocity = -2f;
+
+        InteractiveBox caja = hit.collider.GetComponent<InteractiveBox>();
+        if (caja != null)
+        {
+            // OJO: hit.moveDirection NO es un vector normalizado (es el desplazamiento
+            // de este frame, muy chico). Hay que normalizarlo o la fuerza real es casi nula.
+            Vector3 pushDirection = hit.moveDirection;
+            pushDirection.y = 0;
+            if (pushDirection.sqrMagnitude > 0.0001f)
+                pushDirection.Normalize();
+
+            caja.Empujar(pushDirection, hit.point);
+        }
+        else
+        {
+            // Fallback generico para otros Rigidbodies empujables no controlados por red.
+            Rigidbody rb = hit.collider.attachedRigidbody;
+            if (rb != null && !rb.isKinematic)
+            {
+                Vector3 pushDirection = hit.moveDirection;
+                pushDirection.y = 0;
+                if (pushDirection.sqrMagnitude > 0.0001f)
+                    pushDirection.Normalize();
+                float pushPower = 10f;
+                rb.AddForceAtPosition(pushDirection * pushPower, hit.point, ForceMode.Force);
+            }
+        }
+
+        // Avisar a plataformas que se caen al ser pisadas
+        FallingPlatform plataforma = hit.collider.GetComponent<FallingPlatform>();
+        if (plataforma != null && hit.normal.y > 0.5f) // solo si lo pisamos desde arriba
+        {
+            plataforma.NotificarPisada();
+        }
     }
-}
+
     public void SetCheckpoint(Vector3 newPosition)
     {
         checkpointPosition = newPosition;
@@ -253,14 +329,52 @@ public class PlayerController : NetworkBehaviour
 
     public void Respawn()
     {
+        if (invulnerable) return;
+        if (VidasActuales <= 0) return;
+
+        invulnerable = true;
+        Invoke(nameof(QuitarInvulnerable), 1f);
+
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            vidas.Value--;
+        else
+            vidasOffline--;
+
+        if (VidasActuales <= 0)
+        {
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+                GameManager.Instance?.PlayerEliminatedServerRpc(OwnerClientId);
+            else
+                UIManager.Instance?.MostrarDerrota();
+
+            enabled = false;
+            return;
+        }
+
         cc.enabled = false;
         transform.position = checkpointPosition;
         cc.enabled = true;
 
         horizontalVelocity = Vector3.zero;
         verticalVelocity = 0f;
-        isJumping = false;
         wasGrounded = cc.isGrounded;
+
+        Camera.main?.GetComponent<PlayerCamera>()?.PlayRespawnTransition();
+    }
+
+    void QuitarInvulnerable()
+    {
+        invulnerable = false;
+    }
+
+    [Rpc(SendTo.ClientsAndHost)]
+    public void DesactivarJugadorClientRpc()
+    {
+        if (IsOwner)
+        {
+            enabled = false;
+            UIManager.Instance?.MostrarDerrota();
+        }
     }
 
     public void SetSurfaceMultipliers(float accelMult, float frictionMult, float speedMult)
@@ -280,7 +394,6 @@ public class PlayerController : NetworkBehaviour
     public void ExternalJump(float force)
     {
         verticalVelocity = force;
-        isJumping = true;
     }
 
     public void SetSpeedMultiplier(float multiplier)
@@ -292,4 +405,14 @@ public class PlayerController : NetworkBehaviour
     {
         speedMultiplier = 1f;
     }
+
+    public override void OnDestroy()
+    {
+        base.OnDestroy();
+        Jugadores.Remove(this);
+    }
+    public float GetVerticalVelocity()
+{
+    return verticalVelocity;
+}
 }

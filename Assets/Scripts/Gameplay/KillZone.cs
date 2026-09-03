@@ -1,24 +1,24 @@
 using UnityEngine;
-using Unity.Netcode;
 
+/// <summary>
+/// Zona (trigger) gigante que va debajo de todo el mapa. Si el jugador se cae
+/// del recorrido, al entrar en contacto se lo respawnea automaticamente en su
+/// ultimo checkpoint (usando la logica que ya existe en PlayerController.Respawn()).
+/// Configuracion: BoxCollider con Is Trigger activado, bien grande y abajo de todo.
+/// </summary>
+[RequireComponent(typeof(Collider))]
 public class KillZone : MonoBehaviour
 {
-    void OnTriggerEnter(Collider other)
+    private void Reset()
     {
-        PlayerController player = other.GetComponent<PlayerController>();
-        if (player == null) return;
+        GetComponent<Collider>().isTrigger = true;
+    }
 
-        // Si no hay red activa (offline), respawnear directamente
-        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
-        {
-            player.Respawn();
-            return;
-        }
+    private void OnTriggerEnter(Collider other)
+    {
+        PlayerController pc = other.GetComponent<PlayerController>();
+        if (pc == null) return;
 
-        // Si hay red, solo el dueño puede respawnearse a sí mismo
-        if (player.IsOwner)
-        {
-            player.Respawn();
-        }
+        pc.Respawn();
     }
 }
