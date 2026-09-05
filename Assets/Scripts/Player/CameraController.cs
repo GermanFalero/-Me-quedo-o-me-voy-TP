@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.SceneManagement;
 
 public class CameraController : MonoBehaviour
 {
@@ -32,12 +33,19 @@ public class CameraController : MonoBehaviour
     {
         if (playerTransform == null) return;
 
-        if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != "MenuPrincipal")
-        {
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
-        }
+        // Si está pausado, no tocamos ni el cursor ni la cámara
+        if (Time.timeScale == 0f)
+            return;
 
+        // Si estamos en el menú, no bloqueamos el cursor
+        if (SceneManager.GetActiveScene().name == "MenuPrincipal")
+            return;
+
+        // Bloquear cursor solo cuando se está jugando
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+
+        // Lectura del mouse
         float mx = 0f;
         float my = 0f;
 
@@ -48,19 +56,25 @@ public class CameraController : MonoBehaviour
             if (invertY) my = -my;
         }
 
+        // Rotación del jugador (horizontal)
         playerTransform.Rotate(Vector3.up * mx);
 
+        // Mirar arriba/abajo
         pitch = Mathf.Clamp(pitch - my, -maxLookAngle, maxLookAngle);
 
-        Vector3 headPosition = playerTransform.TransformPoint(new Vector3(0, eyeHeight, 0));
+        // Posición de la cámara
+        Vector3 headPosition = playerTransform.TransformPoint(new Vector3(0f, eyeHeight, 0f));
         transform.position = headPosition;
 
-        transform.rotation = playerTransform.rotation * Quaternion.Euler(pitch, 0, 0);
+        // Rotación de la cámara
+        transform.rotation = playerTransform.rotation * Quaternion.Euler(pitch, 0f, 0f);
 
+        // FOV dinámico
         if (playerController != null && cam != null)
         {
             float currentSpeed = playerController.HorizontalSpeed;
             float speedRatio = 0f;
+
             if (playerController.runSpeed > playerController.walkSpeed)
                 speedRatio = Mathf.InverseLerp(playerController.walkSpeed, playerController.runSpeed, currentSpeed);
 

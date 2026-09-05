@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using Unity.Netcode;
+using Unity.Collections;
 
 [RequireComponent(typeof(CharacterController))]
 public class PlayerController : NetworkBehaviour
@@ -40,6 +41,33 @@ public class PlayerController : NetworkBehaviour
 
     // Variable local para offline
     private int vidasOffline;
+
+    [Header("Identidad del jugador")]
+    [Tooltip("Colores asignados por orden de llegada (indice = OwnerClientId % cantidad). Poné al menos 5 para que nunca se repitan con 5 jugadores.")]
+    public Color[] paletaColores = new Color[]
+    {
+        new Color(0.95f, 0.3f, 0.3f),  // rojo
+        new Color(0.3f, 0.55f, 0.95f), // azul
+        new Color(0.3f, 0.9f, 0.4f),   // verde
+        new Color(0.95f, 0.85f, 0.2f), // amarillo
+        new Color(0.75f, 0.3f, 0.95f), // violeta
+    };
+
+    public NetworkVariable<FixedString32Bytes> nombreJugador = new NetworkVariable<FixedString32Bytes>(
+        "Jugador",
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Owner
+    );
+
+    public NetworkVariable<Color> colorJugador = new NetworkVariable<Color>(
+        Color.white,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Owner
+    );
+
+    // Version offline (no hay NetworkVariable funcionando sin NetworkManager activo)
+    public string NombreOffline { get; private set; } = "Jugador";
+    public Color ColorOffline { get; private set; } = Color.white;
 
     [Header("Referencias")]
     public Transform cameraTransform;
@@ -105,6 +133,10 @@ public class PlayerController : NetworkBehaviour
             vidas.Value = vidasIniciales;
             vidasOffline = vidasIniciales;
 
+            string nombreElegido = PlayerPrefs.GetString("NombreJugador", $"Jugador {OwnerClientId}");
+            nombreJugador.Value = nombreElegido;
+            colorJugador.Value = paletaColores[(int)(OwnerClientId % (ulong)paletaColores.Length)];
+
             if (Camera.main != null)
             {
                 cameraTransform = Camera.main.transform;
@@ -138,8 +170,22 @@ public class PlayerController : NetworkBehaviour
 
         // Inicializar vidas en offline
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
+        {
             vidasOffline = vidasIniciales;
+            NombreOffline = PlayerPrefs.GetString("NombreJugador", "Jugador");
+            ColorOffline = paletaColores.Length > 0 ? paletaColores[0] : Color.white;
+        }
     }
+
+    /// <summary>Nombre a mostrar, sea online (NetworkVariable) u offline (campo local).</summary>
+    public string NombreActual => (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        ? nombreJugador.Value.ToString()
+        : NombreOffline;
+
+    /// <summary>Color a mostrar, sea online (NetworkVariable) u offline (campo local).</summary>
+    public Color ColorActual => (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        ? colorJugador.Value
+        : ColorOffline;
 
     void Update()
     {
@@ -343,7 +389,7 @@ public class PlayerController : NetworkBehaviour
         if (VidasActuales <= 0)
         {
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-                GameManager.Instance?.PlayerEliminatedServerRpc(OwnerClientId);
+                RaceManager.Instance?.PlayerEliminatedServerRpc(OwnerClientId);
             else
                 UIManager.Instance?.MostrarDerrota();
 
@@ -360,6 +406,15 @@ public class PlayerController : NetworkBehaviour
         wasGrounded = cc.isGrounded;
 
         Camera.main?.GetComponent<PlayerCamera>()?.PlayRespawnTransition();
+    }
+
+    /// <summary>
+    /// Llamar cuando ESTE jugador cruza la meta: deja de poder moverse mientras
+    /// espera a que terminen los demas, sin pausar el juego para nadie mas.
+    /// </summary>
+    public void DetenerAlLlegar()
+    {
+        enabled = false;
     }
 
     void QuitarInvulnerable()
@@ -411,8 +466,9 @@ public class PlayerController : NetworkBehaviour
         base.OnDestroy();
         Jugadores.Remove(this);
     }
+
     public float GetVerticalVelocity()
-{
-    return verticalVelocity;
-}
+    {
+        return verticalVelocity;
+    }
 }
