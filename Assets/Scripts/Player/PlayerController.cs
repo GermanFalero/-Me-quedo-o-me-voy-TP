@@ -2,12 +2,10 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using Unity.Netcode;
-using Unity.Collections;
 
 [RequireComponent(typeof(CharacterController))]
 public class PlayerController : NetworkBehaviour
 {
-    // Lista estática para que GameManager pueda encontrar a los jugadores
     public static List<PlayerController> Jugadores = new List<PlayerController>();
 
     [Header("Movimiento")]
@@ -39,35 +37,7 @@ public class PlayerController : NetworkBehaviour
         NetworkVariableWritePermission.Owner
     );
 
-    // Variable local para offline
     private int vidasOffline;
-
-    [Header("Identidad del jugador")]
-    [Tooltip("Colores asignados por orden de llegada (indice = OwnerClientId % cantidad). Poné al menos 5 para que nunca se repitan con 5 jugadores.")]
-    public Color[] paletaColores = new Color[]
-    {
-        new Color(0.95f, 0.3f, 0.3f),  // rojo
-        new Color(0.3f, 0.55f, 0.95f), // azul
-        new Color(0.3f, 0.9f, 0.4f),   // verde
-        new Color(0.95f, 0.85f, 0.2f), // amarillo
-        new Color(0.75f, 0.3f, 0.95f), // violeta
-    };
-
-    public NetworkVariable<FixedString32Bytes> nombreJugador = new NetworkVariable<FixedString32Bytes>(
-        "Jugador",
-        NetworkVariableReadPermission.Everyone,
-        NetworkVariableWritePermission.Owner
-    );
-
-    public NetworkVariable<Color> colorJugador = new NetworkVariable<Color>(
-        Color.white,
-        NetworkVariableReadPermission.Everyone,
-        NetworkVariableWritePermission.Owner
-    );
-
-    // Version offline (no hay NetworkVariable funcionando sin NetworkManager activo)
-    public string NombreOffline { get; private set; } = "Jugador";
-    public Color ColorOffline { get; private set; } = Color.white;
 
     [Header("Referencias")]
     public Transform cameraTransform;
@@ -88,36 +58,33 @@ public class PlayerController : NetworkBehaviour
     private float currentSpeedMult = 1f;
 
     [Header("Plataformas moviles")]
-    [Tooltip("Distancia del raycast hacia abajo para detectar si hay una plataforma movil debajo.")]
     public float distanciaDeteccionPlataforma = 0.3f;
-
-    [Tooltip("Layer(s) donde estan las plataformas moviles. Dejalo en Everything si no usas layers separadas.")]
     public LayerMask capaPlataformas = ~0;
 
     private MovingPlatform plataformaActual;
 
+    // Offline: true. Online: false hasta que RaceManager permita moverse.
+    private bool carreraEmpezada = true;
+
     public float HorizontalSpeed => horizontalVelocity.magnitude;
     public bool IsGrounded => cc != null && cc.isGrounded;
 
-    // Propiedad que devuelve las vidas actuales según el modo
     public int VidasActuales
     {
         get
         {
             if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
                 return vidas.Value;
-            else
-                return vidasOffline;
+            return vidasOffline;
         }
     }
 
-    // Determina si este jugador es controlable localmente
     private bool EsDueno
     {
         get
         {
             if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
-                return true; // Offline
+                return true;
             return IsOwner;
         }
     }
@@ -125,17 +92,16 @@ public class PlayerController : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         base.OnNetworkSpawn();
-        Jugadores.Add(this);
+
+        if (!Jugadores.Contains(this))
+            Jugadores.Add(this);
 
         if (IsOwner)
         {
             enabled = true;
+            carreraEmpezada = false; // espera cuenta regresiva / RaceManager
             vidas.Value = vidasIniciales;
             vidasOffline = vidasIniciales;
-
-            string nombreElegido = PlayerPrefs.GetString("NombreJugador", $"Jugador {OwnerClientId}");
-            nombreJugador.Value = nombreElegido;
-            colorJugador.Value = paletaColores[(int)(OwnerClientId % (ulong)paletaColores.Length)];
 
             if (Camera.main != null)
             {
@@ -156,6 +122,7 @@ public class PlayerController : NetworkBehaviour
     void Start()
     {
         cc = GetComponent<CharacterController>();
+
         if (cameraTransform == null && Camera.main != null)
             cameraTransform = Camera.main.transform;
 
@@ -165,31 +132,39 @@ public class PlayerController : NetworkBehaviour
             Camera.main.GetComponent<CameraController>()?.SetTarget(transform);
         }
 
-        wasGrounded = cc.isGrounded;
+        if (cc != null)
+            wasGrounded = cc.isGrounded;
+
         checkpointPosition = transform.position;
 
-        // Inicializar vidas en offline
+        // Offline
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
         {
             vidasOffline = vidasIniciales;
-            NombreOffline = PlayerPrefs.GetString("NombreJugador", "Jugador");
-            ColorOffline = paletaColores.Length > 0 ? paletaColores[0] : Color.white;
+            carreraEmpezada = true;
+
+            if (!Jugadores.Contains(this))
+                Jugadores.Add(this);
         }
     }
 
-    /// <summary>Nombre a mostrar, sea online (NetworkVariable) u offline (campo local).</summary>
-    public string NombreActual => (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-        ? nombreJugador.Value.ToString()
-        : NombreOffline;
+    public void PermitirMovimiento(bool permitido)
+    {
+        carreraEmpezada = permitido;
 
-    /// <summary>Color a mostrar, sea online (NetworkVariable) u offline (campo local).</summary>
-    public Color ColorActual => (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-        ? colorJugador.Value
-        : ColorOffline;
+        if (!permitido)
+        {
+            horizontalVelocity = Vector3.zero;
+            verticalVelocity = 0f;
+        }
+    }
 
     void Update()
     {
         if (!EsDueno) return;
+        if (!carreraEmpezada) return;
+        if (cc == null || !cc.enabled) return;
+        if (Time.timeScale == 0f) return;
 
         if (cameraTransform == null && Camera.main != null)
         {
@@ -200,13 +175,13 @@ public class PlayerController : NetworkBehaviour
         HandleMove();
 
         if (Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame)
-        {
             Respawn();
-        }
     }
 
     void HandleMove()
     {
+        if (cc == null || !cc.enabled) return;
+
         DetectarPlataformaMovil();
 
         if (cc.isGrounded)
@@ -241,9 +216,11 @@ public class PlayerController : NetworkBehaviour
                 Vector3 forward = cameraTransform.forward;
                 forward.y = 0f;
                 forward.Normalize();
+
                 Vector3 right = cameraTransform.right;
                 right.y = 0f;
                 right.Normalize();
+
                 desiredDirection = (forward * input.z + right * input.x).normalized;
             }
         }
@@ -269,7 +246,9 @@ public class PlayerController : NetworkBehaviour
                 horizontalVelocity = Vector3.MoveTowards(horizontalVelocity, airTarget, accel * Time.deltaTime);
             }
             else
+            {
                 horizontalVelocity = Vector3.MoveTowards(horizontalVelocity, Vector3.zero, friction * Time.deltaTime);
+            }
         }
 
         bool justLanded = cc.isGrounded && !wasGrounded;
@@ -277,14 +256,14 @@ public class PlayerController : NetworkBehaviour
             horizontalVelocity *= landingBoostMultiplier;
         wasGrounded = cc.isGrounded;
 
-        if (jumpBufferTimer > 0 && coyoteTimer > 0)
+        if (jumpBufferTimer > 0f && coyoteTimer > 0f)
         {
             verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity);
-            jumpBufferTimer = 0;
-            coyoteTimer = 0;
+            jumpBufferTimer = 0f;
+            coyoteTimer = 0f;
         }
 
-        if (cc.isGrounded && verticalVelocity < 0)
+        if (cc.isGrounded && verticalVelocity < 0f)
             verticalVelocity = -0.1f;
 
         if (!cc.isGrounded)
@@ -297,35 +276,29 @@ public class PlayerController : NetworkBehaviour
                 verticalVelocity += g * Time.deltaTime;
             }
             else
+            {
                 verticalVelocity += gravity * Time.deltaTime;
+            }
         }
 
         Vector3 motion = horizontalVelocity * Time.deltaTime + Vector3.up * verticalVelocity * Time.deltaTime;
 
-        // Si estamos parados sobre una plataforma movil, sumamos su desplazamiento
-        // para que el jugador se mueva junto con ella (CharacterController no lo hace solo).
         if (plataformaActual != null)
             motion += plataformaActual.DeltaMovimiento;
 
         cc.Move(motion);
     }
 
-    /// <summary>
-    /// Chequea con un raycast hacia abajo si el jugador esta parado sobre una MovingPlatform.
-    /// </summary>
     void DetectarPlataformaMovil()
     {
         plataformaActual = null;
-
-        if (!cc.isGrounded) return;
+        if (cc == null || !cc.enabled || !cc.isGrounded) return;
 
         Vector3 origen = transform.position + cc.center + Vector3.up * 0.05f;
         float distancia = (cc.height / 2f) + distanciaDeteccionPlataforma;
 
         if (Physics.Raycast(origen, Vector3.down, out RaycastHit hit, distancia, capaPlataformas, QueryTriggerInteraction.Ignore))
-        {
             plataformaActual = hit.collider.GetComponent<MovingPlatform>();
-        }
     }
 
     void OnControllerColliderHit(ControllerColliderHit hit)
@@ -336,10 +309,8 @@ public class PlayerController : NetworkBehaviour
         InteractiveBox caja = hit.collider.GetComponent<InteractiveBox>();
         if (caja != null)
         {
-            // OJO: hit.moveDirection NO es un vector normalizado (es el desplazamiento
-            // de este frame, muy chico). Hay que normalizarlo o la fuerza real es casi nula.
             Vector3 pushDirection = hit.moveDirection;
-            pushDirection.y = 0;
+            pushDirection.y = 0f;
             if (pushDirection.sqrMagnitude > 0.0001f)
                 pushDirection.Normalize();
 
@@ -347,25 +318,21 @@ public class PlayerController : NetworkBehaviour
         }
         else
         {
-            // Fallback generico para otros Rigidbodies empujables no controlados por red.
             Rigidbody rb = hit.collider.attachedRigidbody;
             if (rb != null && !rb.isKinematic)
             {
                 Vector3 pushDirection = hit.moveDirection;
-                pushDirection.y = 0;
+                pushDirection.y = 0f;
                 if (pushDirection.sqrMagnitude > 0.0001f)
                     pushDirection.Normalize();
-                float pushPower = 10f;
-                rb.AddForceAtPosition(pushDirection * pushPower, hit.point, ForceMode.Force);
+
+                rb.AddForceAtPosition(pushDirection * 10f, hit.point, ForceMode.Force);
             }
         }
 
-        // Avisar a plataformas que se caen al ser pisadas
         FallingPlatform plataforma = hit.collider.GetComponent<FallingPlatform>();
-        if (plataforma != null && hit.normal.y > 0.5f) // solo si lo pisamos desde arriba
-        {
+        if (plataforma != null && hit.normal.y > 0.5f)
             plataforma.NotificarPisada();
-        }
     }
 
     public void SetCheckpoint(Vector3 newPosition)
@@ -377,6 +344,7 @@ public class PlayerController : NetworkBehaviour
     {
         if (invulnerable) return;
         if (VidasActuales <= 0) return;
+        if (cc == null) return;
 
         invulnerable = true;
         Invoke(nameof(QuitarInvulnerable), 1f);
@@ -394,6 +362,7 @@ public class PlayerController : NetworkBehaviour
                 UIManager.Instance?.MostrarDerrota();
 
             enabled = false;
+            OcultarPersonaje();
             return;
         }
 
@@ -406,15 +375,26 @@ public class PlayerController : NetworkBehaviour
         wasGrounded = cc.isGrounded;
 
         Camera.main?.GetComponent<PlayerCamera>()?.PlayRespawnTransition();
+        // Si solo usás CameraController, esta línea puede quedar o borrarse.
     }
 
-    /// <summary>
-    /// Llamar cuando ESTE jugador cruza la meta: deja de poder moverse mientras
-    /// espera a que terminen los demas, sin pausar el juego para nadie mas.
-    /// </summary>
+    public void OcultarPersonaje()
+    {
+        foreach (var renderer in GetComponentsInChildren<Renderer>())
+            renderer.enabled = false;
+
+        if (cc != null)
+            cc.enabled = false;
+
+        GetComponent<PlayerIdentity>()?.OcultarCartel();
+    }
+
     public void DetenerAlLlegar()
     {
+        horizontalVelocity = Vector3.zero;
+        verticalVelocity = 0f;
         enabled = false;
+        OcultarPersonaje();
     }
 
     void QuitarInvulnerable()
@@ -425,6 +405,8 @@ public class PlayerController : NetworkBehaviour
     [Rpc(SendTo.ClientsAndHost)]
     public void DesactivarJugadorClientRpc()
     {
+        OcultarPersonaje();
+
         if (IsOwner)
         {
             enabled = false;
@@ -448,6 +430,8 @@ public class PlayerController : NetworkBehaviour
 
     public void ExternalJump(float force)
     {
+        if (!carreraEmpezada) return;
+        if (cc == null || !cc.enabled) return;
         verticalVelocity = force;
     }
 

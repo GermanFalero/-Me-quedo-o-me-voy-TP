@@ -31,11 +31,18 @@ public class FinishLine : MonoBehaviour
             // (evita RPCs redundantes por las replicas de otros jugadores en el trigger local).
             if (!pc.IsOwner) return;
 
-            RaceManager.Instance?.PlayerFinishedServerRpc(pc.OwnerClientId);
+            if (RaceManager.Instance == null)
+            {
+                Debug.LogError("FinishLine: no se encontro un RaceManager en esta escena. Agregalo (o regenera el nivel) para que la meta funcione en multijugador.");
+                return;
+            }
+
+            RaceManager.Instance.PlayerFinishedServerRpc(pc.OwnerClientId);
         }
         else
         {
             UIManager.Instance?.MostrarVictoria(pc.OwnerClientId);
+            pc.OcultarPersonaje();
         }
     }
 }

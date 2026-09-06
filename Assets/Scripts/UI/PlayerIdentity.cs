@@ -48,6 +48,8 @@ public class PlayerIdentity : NetworkBehaviour
     {
         base.OnNetworkSpawn();
 
+        ConfigurarEstiloCartel();
+
         nombre.OnValueChanged += (_, nuevoNombre) => ActualizarCartel(nuevoNombre.ToString());
 
         if (IsOwner)
@@ -65,6 +67,8 @@ public class PlayerIdentity : NetworkBehaviour
 
     private void Start()
     {
+        ConfigurarEstiloCartel();
+
         // Offline: no hay OnNetworkSpawn, asi que inicializamos aca directamente.
         if (!ModoOnline)
         {
@@ -72,6 +76,30 @@ public class PlayerIdentity : NetworkBehaviour
             ActualizarCartel(nombreGuardado);
             AplicarColor(PlayerColors.GetColor(0));
             if (carteldeNombre != null) carteldeNombre.gameObject.SetActive(false);
+        }
+    }
+
+    /// <summary>
+    /// Configura el texto para que se lea bien sobre CUALQUIER fondo del mapa:
+    /// negrita + contorno oscuro (Outline). Se hace por codigo asi funciona
+    /// aunque no lo hayas configurado a mano en el prefab.
+    /// </summary>
+    private void ConfigurarEstiloCartel()
+    {
+        if (textoNombreFlotante == null) return;
+
+        textoNombreFlotante.fontStyle = FontStyle.Bold;
+        textoNombreFlotante.fontSize = 28;
+        textoNombreFlotante.alignment = TextAnchor.MiddleCenter;
+        textoNombreFlotante.color = Color.white;
+        textoNombreFlotante.horizontalOverflow = HorizontalWrapMode.Overflow;
+        textoNombreFlotante.verticalOverflow = VerticalWrapMode.Overflow;
+
+        if (textoNombreFlotante.GetComponent<Outline>() == null)
+        {
+            Outline contorno = textoNombreFlotante.gameObject.AddComponent<Outline>();
+            contorno.effectColor = new Color(0f, 0f, 0f, 0.85f);
+            contorno.effectDistance = new Vector2(1.5f, -1.5f);
         }
     }
 
@@ -96,5 +124,11 @@ public class PlayerIdentity : NetworkBehaviour
     {
         if (textoNombreFlotante != null)
             textoNombreFlotante.text = texto;
+    }
+
+    /// <summary>Oculta el cartel flotante. Se llama junto con ocultar el resto del personaje (ver PlayerController.OcultarPersonaje), para que no quede el nombre flotando solo sin cuerpo debajo.</summary>
+    public void OcultarCartel()
+    {
+        if (carteldeNombre != null) carteldeNombre.gameObject.SetActive(false);
     }
 }

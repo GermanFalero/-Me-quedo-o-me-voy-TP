@@ -15,17 +15,21 @@ public class UIManager : MonoBehaviour
     public GameObject panelDerrota;
     public GameObject panelPausa;
     public GameObject panelPodio;
+    public GameObject panelTiempoAgotado;
     public GameObject panelEsperandoOtros;
     public GameObject panelDesconexion;
     public GameObject panelCargando;
+    public GameObject panelCuentaRegresiva;
 
     public Text textoVictoria;
     public Text textoPodio;
+    public Text textoTiempoAgotado;
     public Text textoAvisoLlegada; // texto pequeño tipo "toast" en el HUD, ej: "Jugador 2 llego 3ro!"
     public Text textoEsperandoOtros;
     public Text textoDesconexion;
     public Text textoTimer; // cuenta regresiva de la carrera, en el HUD
     public Text textoCargando;
+    public Text textoCuentaRegresiva;
 
     private bool estaPausado = false;
     private bool puedePausar = true;
@@ -98,7 +102,9 @@ public class UIManager : MonoBehaviour
         if (panelDerrota != null) panelDerrota.SetActive(false);
         if (panelPausa != null) panelPausa.SetActive(false);
         if (panelPodio != null) panelPodio.SetActive(false);
+        if (panelTiempoAgotado != null) panelTiempoAgotado.SetActive(false);
         if (panelEsperandoOtros != null) panelEsperandoOtros.SetActive(false);
+        if (panelCuentaRegresiva != null) panelCuentaRegresiva.SetActive(false);
         if (panelDesconexion != null) panelDesconexion.SetActive(false);
     }
 
@@ -230,6 +236,18 @@ public class UIManager : MonoBehaviour
         Cursor.visible = true;
     }
 
+    /// <summary>Cuenta regresiva antes de que arranque la carrera (esperando jugadores). No pausa el juego.</summary>
+    public void MostrarCuentaRegresiva(int segundosRestantes)
+    {
+        if (panelCuentaRegresiva != null) panelCuentaRegresiva.SetActive(true);
+        if (textoCuentaRegresiva != null) textoCuentaRegresiva.text = $"La carrera empieza en {segundosRestantes}...";
+    }
+
+    public void OcultarCuentaRegresiva()
+    {
+        if (panelCuentaRegresiva != null) panelCuentaRegresiva.SetActive(false);
+    }
+
     /// <summary>Mostrar mientras se conecta y/o carga el nivel (offline u online).</summary>
     public void MostrarCargando(string mensaje = "Cargando...")
     {
@@ -276,6 +294,25 @@ public class UIManager : MonoBehaviour
             }
             textoPodio.text = sb.ToString();
         }
+
+        Time.timeScale = 0f;
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+    }
+
+    /// <summary>
+    /// Se cumplio el tiempo limite de carrera y nadie llego a la meta (offline,
+    /// o multijugador sin ningun jugador finalizado). Evita mostrar un podio
+    /// vacio que se ve como si "no pasara nada".
+    /// </summary>
+    public void MostrarTiempoAgotado()
+    {
+        OcultarTodo();
+        puedePausar = false;
+        estaPausado = false;
+
+        if (panelTiempoAgotado != null) panelTiempoAgotado.SetActive(true);
+        if (textoTiempoAgotado != null) textoTiempoAgotado.text = "¡Se acabó el tiempo!";
 
         Time.timeScale = 0f;
         Cursor.lockState = CursorLockMode.None;
